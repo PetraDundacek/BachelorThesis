@@ -1,0 +1,204 @@
+---
+title: "Propojenost s letišti v USA"
+author: "Petra Dundáček Božoňová"
+date: "2024-07-24"
+output:
+  pdf_document:
+    highlight: kate
+    keep_tex: true
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(igraph)
+library(knitr)
+library(ggplot2)
+
+```
+
+
+```{r}
+
+#nacteni dat o leteckych spojenich
+routes <- read.table("routes.dat", sep = ",")
+colnames(routes) <- c("Airline", "AirlineID",
+                      "SourceAirport", "SourceAirportID",
+                      "DestinationAirport",
+                      "DestinationAirportID",
+                      "Codeshare", "Stops", "Equipment")
+
+#vybere sloupce airline, source a destination airport a codeshare
+routes <- routes %>% select(SourceAirport, DestinationAirport,
+                            Airline, Codeshare)
+
+
+#definovani dopravcu Star Alliance
+sa_airlines <- c('A3', 'AC', 'CA', 'AI','NZ','NH', 
+                 'OZ', 'OS', 'AV','SN', 'CM', 'OU', 'MS',
+                 'ET','BR', 'LO', 'LH', 'SK', 'ZH', 'SQ',
+                 'SA', 'LX', 'TP', 'TG', 'TK', 'UA')
+
+starAlliance <- routes%>% filter(Airline %in% sa_airlines)
+
+#smazani ruskych letist
+#nacteni dat o letistich
+airports <- read.table("airports.dat", sep = ",", 
+                       encoding = "UTF-8")
+
+colnames(airports) <- c("AirportID", "Name", "City", 
+                        "Country", "IATA", "ICAO",
+                        "Latitude", "Longitude", "Altitude",
+                        "Timezone", "DST", "Tz", "Type", 
+                        "Source")
+
+#vybereme sloupce Country a IATA
+airports <- airports %>% select(Country, IATA)
+
+
+airportsRusko <- airports%>% filter(Country == "Russia")
+
+#z puvodniho seznamu odebereme ruska letiste
+starAllianceNew <- starAlliance %>% filter(!SourceAirport %in%
+                                             airportsRusko$IATA)
+starAllianceNew <- starAllianceNew %>% filter(!DestinationAirport 
+                                              %in%  airportsRusko$IATA)
+
+sa_graph <- graph_from_data_frame(starAllianceNew, directed=FALSE)
+
+#airports <- read.csv("airports.dat",header=TRUE)
+
+#vybereme sloupce Country a IATA
+#airports <- airports%>% select(c(4,5))
+
+airportsUSA <- airports%>% filter(Country == "United States")
+
+
+#v původním seznamu ponecháme pouze Americká letiště + hub
+
+frankfurtUSA <- starAlliance %>% filter((SourceAirport %in% airportsUSA$IATA ) & (DestinationAirport == "FRA" )| (SourceAirport == "FRA" ) & (DestinationAirport %in% airportsUSA$IATA )
+                                        )
+
+frankfurtUSAGraph <- graph_from_data_frame(frankfurtUSA, directed=FALSE)
+fraUSA<-incident(frankfurtUSAGraph, 1, mode = c("all"))
+
+degreeFRA <-degree(
+  frankfurtUSAGraph,
+  v = V(frankfurtUSAGraph),
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+degreeFRA
+
+plot(frankfurtUSAGraph,vertex.size=25, vertex.label.cex = 0.75)
+
+mnichovUSA <- starAlliance %>% filter((SourceAirport %in% airportsUSA$IATA ) & (DestinationAirport == "MUC" )| (SourceAirport == "MUC" ) & (DestinationAirport %in% airportsUSA$IATA )
+)
+
+mnichovUSAGraph <- graph_from_data_frame(mnichovUSA, directed=FALSE)
+mucUSA<-incident(mnichovUSAGraph, 7, mode = c("all"))
+
+degreeMUC <-degree(
+  mnichovUSAGraph,
+  v = V(mnichovUSAGraph),
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+degreeMUC
+
+plot(mnichovUSAGraph,vertex.size=25, vertex.label.cex = 0.75)
+
+
+#SKYTEAM
+airportsRusko <- airports%>% filter(Country == "Russia")
+
+#seznam bez Aeroflotu
+st_airlines_new <- c('AR', 'AM', 'UX', 'AF','CI','MU', 
+                     'OK', 'DL', 'GA','AZ', 'KQ', 'KL', 'KE',
+                     'ME','SV', 'RO', 'VN', 'VS', 'MF')
+
+skyTeamNew <- routes%>% filter(Airline %in% st_airlines_new)
+
+#z původního seznamu odebereme ruská letiště
+skyTeamNew <- skyTeamNew %>% filter(!SourceAirport %in% airportsRusko$IATA)
+skyTeamNew <- skyTeamNew %>% filter(!DestinationAirport %in% airportsRusko$IATA)
+
+
+parisUSA <- skyTeamNew %>% filter((SourceAirport %in% airportsUSA$IATA ) & (DestinationAirport == "CDG" )| (SourceAirport == "CDG" ) & (DestinationAirport %in% airportsUSA$IATA )
+)
+
+parisUSAGraph <- graph_from_data_frame(parisUSA, directed=FALSE)
+cdgUSA<-incident(parisUSAGraph, 3, mode = c("all"))
+
+degreeCDG <-degree(
+  parisUSAGraph,
+  v = V(parisUSAGraph),
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+degreeCDG
+
+plot(parisUSAGraph,vertex.size=25, vertex.label.cex = 0.75)
+
+amsterdamUSA <- skyTeamNew %>% filter((SourceAirport %in% airportsUSA$IATA ) & (DestinationAirport == "AMS" )| (SourceAirport == "AMS" ) & (DestinationAirport %in% airportsUSA$IATA )
+)
+
+amsterdamUSAGraph <- graph_from_data_frame(amsterdamUSA, directed=FALSE)
+amsUSA<-incident(amsterdamUSAGraph, 1, mode = c("all"))
+
+degreeAMS <-degree(
+  amsterdamUSAGraph,
+  v = V(amsterdamUSAGraph),
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+degreeAMS
+
+plot(amsterdamUSAGraph,vertex.size=25, vertex.label.cex = 0.75)
+
+
+#ONEWORLD
+
+ow_airlines <- c('AS', 'AA', 'BA', 'CX','AY','IB', 
+                 'JL', 'MH', 'QF','QR', 'AT', 'RJ', 'UL',
+                'FJ','WY')
+
+oneWorld <- routes%>% filter(Airline %in% ow_airlines)
+
+#z puvodniho seznamu odebereme ruska letiste
+oneWorldNew <- oneWorld %>% filter(!SourceAirport %in%
+                                             airportsRusko$IATA)
+oneWorldNew <- oneWorldNew %>% filter(!DestinationAirport 
+                                              %in%  airportsRusko$IATA)
+
+
+londynUSA <- oneWorld %>% filter((SourceAirport %in% airportsUSA$IATA ) & (DestinationAirport == "LHR" )| (SourceAirport == "LHR" ) & (DestinationAirport %in% airportsUSA$IATA )
+)
+
+londynUSAGraph <- graph_from_data_frame(londynUSA, directed=FALSE)
+lhrUSA<-incident(londynUSAGraph, 14, mode = c("all"))
+
+degreeLHR <-degree(
+  londynUSAGraph,
+  v = V(londynUSAGraph),
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+degreeLHR
+plot(londynUSAGraph, vertex.size=25, vertex.label.cex = 0.75)
+
+MH <- londynUSA %>%  filter(Airline == "MH")
+MH
+
+```

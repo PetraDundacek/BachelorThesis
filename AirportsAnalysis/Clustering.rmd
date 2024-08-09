@@ -1,0 +1,264 @@
+---
+title: "Clustering igraph"
+author: "Petra Dundáček Božoňová"
+date: "2024-07-24"
+output:
+  pdf_document:
+    highlight: kate
+    keep_tex: true
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(igraph)
+library(knitr)
+library(ggplot2)
+
+
+```
+
+
+# Načtení dat 
+
+využijeme soubor routes.dat
+```{r}
+
+get_data <- function() {
+  
+  #nacteni dat o leteckych spojenich
+  routes <- read.table("routes.dat", sep = ",")
+  colnames(routes) <- c("Airline", "AirlineID",
+                        "SourceAirport", "SourceAirportID",
+                        "DestinationAirport",
+                        "DestinationAirportID",
+                        "Codeshare", "Stops", "Equipment")
+  
+  #vybere sloupce airline, source a destination airport a codeshare
+  routes <- routes %>% select(SourceAirport, DestinationAirport,
+                              Airline, Codeshare)
+  
+  return(routes)
+}
+
+routes <- get_data()
+
+
+```
+
+#Funkce pro vytvoření podgrafů jednotlivých aliancí
+Využívá ji dále následující funkce TopAllianceVertexes()
+
+```{r}
+AllianceData <- function (data, allianceName){
+  
+  alliance <- ""
+  
+  if (allianceName == "StarAlliance")
+  {
+  alliance <- c('A3', 'AC', 'CA', 'AI','NZ','NH', 
+                   'OZ', 'OS', 'AV','SN', 'CM', 'OU', 'MS',
+                   'ET','BR', 'LO', 'LH', 'SK', 'ZH', 'SQ',
+                   'SA', 'LX', 'TP', 'TG', 'TK', 'UA')
+  }
+  
+  else if (allianceName == "SkyTeam")
+  {
+  alliance <- c('AR', 'AM', 'UX', 'AF','CI','MU', 
+                   'OK', 'DL', 'GA','AZ', 'KQ', 'KL', 'KE',
+                   'ME','SV', 'RO', 'VN', 'VS', 'MF')
+  }
+  
+  else if (allianceName == "OneWorld")
+  {
+  alliance <- c('AS', 'AA', 'BA', 'CX','AY','IB', 
+                'JL', 'MH', 'QF','QR', 'AT', 'RJ', 'UL',
+                'FJ','WY')
+  }
+  
+  allianceData <- data%>% filter(Airline %in% alliance)
+  #allianceData <- allianceData %>% relocate(Airline, .after = DestinationAirport)
+  
+  
+  return(allianceData)
+  
+}
+
+```
+
+# Vytvoření podgrafu z nejsilnějších uzlů aliancí
+
+Využijeme 20 nejsilnějších letišť z každé aliance -  celkem 53 uzlů, protože se některá letiště v seznamech opakují
+
+```{r}
+
+# funkce pro získání top 20 uzlů za alianci
+TopAllianceVertexes <- function (data,allianceName)
+  {
+  allianceData <- AllianceData(data,allianceName)
+  allianceGraph <- graph_from_data_frame(allianceData)
+  
+  # Degree centrality včetně multihran
+  degreeMulti <-degree(
+    allianceGraph,
+    v = V(allianceGraph),
+    mode = c("all"),
+    loops = FALSE,
+    normalized = FALSE
+  )
+  topList <- head(sort(degreeMulti, decreasing = TRUE), n=20)
+  names <- names(topList)
+  
+  
+  return(topList)
+}
+  
+#top uzly jednotlivých aliancí
+SA <- TopAllianceVertexes(routes, "StarAlliance")
+ST <- TopAllianceVertexes(routes, "SkyTeam")
+OW <- TopAllianceVertexes(routes, "OneWorld")
+
+
+
+#Vytvoření společného jmenného seznamu
+names <- names(SA)  
+names <- append(names, names(ST))
+names <- append(names, names(OW))
+
+#základní graf o 53 uzlech
+
+#funkce pro vytvoření grafu vybere ze seznamu routes vybraných 53 top letišť v seznamu names
+basicGraph <- function (data, airportNames){
+  
+  data1 <- data%>% filter((SourceAirport %in% airportNames) & (DestinationAirport %in% airportNames))
+  #data1 <- data1 %>% relocate(Airline, .after = Destination.airport)
+  graph1 <- graph_from_data_frame(data1, directed=FALSE)
+  
+  
+  return(graph1)
+}
+
+graphBasic <- basicGraph(routes, names)
+
+plot(graphBasic,vertex.size=25, vertex.label.cex = 0.75)
+```
+
+
+# Základní clustering pomocí funkce cluster_optimal()
+
+```{r}
+
+#funkce simplify při odstranění multihran sečte jejich váhy, proto je jako výchozí váha hrany 
+#zvoleno číslo 1, tedy po odstranění multihran bude váha zbývající hrany rovna počtu 
+#multihran na danném spojení
+
+optimalGraph <- function (graphBasic){
+  
+  weighted_routes <- graphBasic
+  E(weighted_routes)$weight <- 1
+  weighted_routes <- simplify(weighted_routes)
+  
+  return(weighted_routes)
+}
+
+optGraph <-optimalGraph(graphBasic)
+optimal<-cluster_optimal(optGraph, weights = E(optGraph)$weight)
+
+#zobrazíme si seznam získanných komunit
+communities(optimal)
+
+#vykreslíme graf sjednotlivými komunitami
+plot( optimal,
+      optGraph,
+      col = membership(optimal),
+      mark.groups = communities(optimal),
+      vertex.size=25, vertex.label.cex = 0.75
+)
+```
+
+# Cluster_edge_betweenness
+
+```{r}
+#funkce pro přípravu grafu - ponecháváme multihrany, váhu počítáme jako převrácenou hodnotu součtu 
+#multihran
+
+EbGraph <- function (graph){
+  
+  weighted_routes <- graphBasic
+  E(weighted_routes)$weight <- count.multiple(weighted_routes)
+  E(weighted_routes)$weight <- 1/E(weighted_routes)$weight
+  
+  return(weighted_routes)
+}
+
+#graf pro cluster_edge_betweenness()
+edgeBtwnsGraph<- EbGraph(graphBasic)
+
+
+
+ebClusters<- cluster_edge_betweenness(
+  edgeBtwnsGraph,
+  weights = E(edgeBtwnsGraph)$weight,
+  directed = FALSE,
+  edge.betweenness = TRUE,
+  merges = TRUE,
+  bridges = TRUE,
+  modularity = TRUE,
+  membership = TRUE
+)
+
+#zobrazíme si jednotlivé komunity
+communities(ebClusters)
+
+#pro vykreslení grafu si nadefinujeme vlastní barvy, protože při využití defaultní palety některé 
+#barvy splývají a dva různé klastry vizuálně působí jako jeden
+
+colors <- c("yellow", "deeppink", "lightgrey", "green", "red", "aquamarine3", "cyan2", 
+            "darkorange", "darkorchid", "darksalmon", "darkolivegreen2")
+
+
+#vykreslíme graf s nadefinovanými barvami uzlů
+plot(edgeBtwnsGraph,
+     col = membership(ebClusters), 
+     mark.groups = communities(ebClusters),
+     vertex.color=colors[membership(ebClusters)], 
+     vertex.size=25, vertex.label.cex = 0.75,
+     edge.color = c("black", "red")[crossing(ebClusters, edgeBtwnsGraph) + 1]
+)
+
+
+#vykreslení dendogramu
+plot_dendrogram(ebClusters,cex=0.5)
+
+```
+
+# Cluster_louvain
+
+Funkce nemá vysokou výpočetní časovou náročnost, proto v tomto případě pracujeme s kompletními daty.
+Vzhledem k rozsáhlosti zpracovávaných dat není přímo v textu bakalářské práce uveden kompletní výstup
+komunit a vykreslen graf.
+
+```{r}
+
+#funkce pro vytvoření grafu - ponechání multihran, váha hrany dle počtu multihran
+getLouvainGraph <-  function (data){
+
+  louvainGraph <- graph_from_data_frame(data, directed=FALSE)
+  weighted_routes <- louvainGraph
+  E(weighted_routes)$weight <- count.multiple(weighted_routes)
+  louvainGraph <- weighted_routes
+  
+  return(louvainGraph)
+  
+}
+
+louvainGraph <- getLouvainGraph(routes)
+
+
+louvain <- cluster_louvain(louvainGraph,weights = E(louvainGraph)$weight, resolution = 1)
+
+
+```
+

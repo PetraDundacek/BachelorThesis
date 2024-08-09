@@ -1,0 +1,352 @@
+---
+title: "Segmentace dle aliancí leteckých dopravců"
+author: "Petra Dundáček Božoňová"
+date: "2024-07-24"
+output:
+  pdf_document:
+    highlight: kate
+    keep_tex: true
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(igraph)
+library(knitr)
+library(ggplot2)
+
+```
+
+# Načtení dat o leteckých spojeních
+
+```{r}
+routes <- read.table("routes.dat", sep = ",")
+colnames(routes) <- c("Airline", "AirlineID",
+                      "SourceAirport", "SourceAirportID",
+                      "DestinationAirport",
+                      "DestinationAirportID",
+                      "Codeshare", "Stops", "Equipment")
+
+#vybere sloupce airline, source a destination airport a codeshare
+routes <- routes %>% select(SourceAirport, DestinationAirport,
+                            Airline, Codeshare)
+
+
+```
+
+# Star Alliance
+```{r}
+#definovani dopravcu Star Alliance
+sa_airlines <- c('A3', 'AC', 'CA', 'AI','NZ','NH', 
+                 'OZ', 'OS', 'AV','SN', 'CM', 'OU', 'MS',
+                 'ET','BR', 'LO', 'LH', 'SK', 'ZH', 'SQ',
+                 'SA', 'LX', 'TP', 'TG', 'TK', 'UA')
+
+starAlliance <- routes%>% filter(Airline %in% sa_airlines)
+
+#smazani ruskych letist
+#nacteni dat o letistich
+airports <- read.table("airports.dat", sep = ",", 
+                       encoding = "UTF-8")
+
+colnames(airports) <- c("AirportID", "Name", "City", 
+                        "Country", "IATA", "ICAO",
+                        "Latitude", "Longitude", "Altitude",
+                        "Timezone", "DST", "Tz", "Type", 
+                        "Source")
+
+#vybereme sloupce Country a IATA
+airports <- airports %>% select(Country, IATA)
+
+
+airportsRusko <- airports%>% filter(Country == "Russia")
+
+#z puvodniho seznamu odebereme ruska letiste
+starAllianceNew <- starAlliance %>% filter(!SourceAirport %in%
+                                             airportsRusko$IATA)
+starAllianceNew <- starAllianceNew %>% filter(!DestinationAirport 
+                                              %in%  airportsRusko$IATA)
+
+sa_graph <- graph_from_data_frame(starAllianceNew, directed=FALSE)
+
+
+
+#odstraní multihrany
+sa_simple_graph <- simplify(
+  sa_graph,
+  remove.multiple = TRUE,
+  remove.loops = TRUE
+)
+
+# Degree centrality včetně multihran
+degreeMulti <-degree(
+  sa_graph,
+  v = V(sa_graph),
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+# Degree centrality bez multihran
+degreeSimple <-degree(
+  sa_simple_graph,
+  v = V(sa_simple_graph),
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+#head(sort(degreeMulti, decreasing = TRUE), n=20)
+
+
+#odstranění codeshare letů
+codeshareDataSA <- starAllianceNew%>% filter(Codeshare != "Y")
+
+codeshare_graph <- graph_from_data_frame(codeshareDataSA, directed=TRUE)
+
+
+# pro celkový počet letů z/do FRA a MUC
+degreeFRA <-degree(
+  codeshare_graph,
+  v = V(codeshare_graph)$name=="FRA",
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+degreeMUC <-degree(
+  codeshare_graph,
+  v = V(codeshare_graph)$name=="MUC",
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+#nový graf poute s hranami, kde let operuje LH
+lufthansa<-delete.edges(codeshare_graph, which(E(codeshare_graph)$Airline != "LH"))
+
+# celkový počet letů z/do FRA a MUC operovaných LH
+degreeFRALH <-degree(
+  lufthansa,
+  v = V(lufthansa)$name=="FRA",
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+degreeMUCLH <-degree(
+  lufthansa,
+  v = V(lufthansa)$name=="MUC",
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+                      
+
+                     
+frankfurtLH <- neighbors(lufthansa, "FRA")
+
+#jednodušší způsob získání degree centrality pro konkrétní letiště
+fra <- incident(lufthansa, 18, mode = c("all"))
+muc <- incident(lufthansa, 52, mode = c("all"))
+
+
+#betweenness pro celou Star Alliance
+bcSA <- betweenness(
+  sa_graph,
+  v = V(sa_graph),
+  directed = TRUE,
+  weights = NULL,
+  normalized = FALSE,
+  cutoff = -1
+)
+
+```
+
+# SkyTeam
+
+```{r}
+
+st_airlines_old <- c('AR', 'AM', 'UX', 'AF','CI','MU', 
+                 'OK', 'DL', 'GA','AZ', 'KQ', 'KL', 'KE',
+                 'ME','SV', 'RO', 'VN', 'VS', 'MF', 'SU')
+
+skyTeamOld <- routes%>% filter(Airline %in% st_airlines_old)
+
+
+st_graph_old <- graph_from_data_frame(skyTeamOld, directed=FALSE)
+
+#odstraní multihrany
+st_simple_graph_old <- simplify(
+  st_graph_old,
+  remove.multiple = TRUE,
+  remove.loops = TRUE
+)
+
+# Degree centrality včetně multihran
+degreeMulti <-degree(
+  st_graph_old,
+  v = V(st_graph_old),
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+# Degree centrality bez multihran
+degreeSimple <-degree(
+  st_simple_graph_old,
+  v = V(st_simple_graph_old),
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+head(sort(degreeMulti,decreasing=TRUE),n=20)
+
+#příprava dat bez Ruska
+
+#seznam bez Aeroflotu
+st_airlines_new <- c('AR', 'AM', 'UX', 'AF','CI','MU', 
+                     'OK', 'DL', 'GA','AZ', 'KQ', 'KL', 'KE',
+                     'ME','SV', 'RO', 'VN', 'VS', 'MF')
+
+skyTeamNew <- routes%>% filter(Airline %in% st_airlines_new)
+
+
+#z původního seznamu odebereme ruská letiště
+skyTeamNew <- skyTeamNew %>% filter(!SourceAirport %in% airportsRusko$IATA)
+skyTeamNew <- skyTeamNew %>% filter(!DestinationAirport %in% airportsRusko$IATA)
+
+# igraph objekt
+st_graph_new <- graph_from_data_frame(skyTeamNew, directed=FALSE)
+
+#odstraní multihrany
+st_simple_graph_new <- simplify(
+  st_graph_new,
+  remove.multiple = TRUE,
+  remove.loops = TRUE
+)
+
+# Degree centrality včetně multihran
+degreeMulti <-degree(
+  st_graph_new,
+  v = V(st_graph_new),
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+# Degree centrality bez multihran
+degreeSimple <-degree(
+  st_simple_graph_new,
+  v = V(st_simple_graph_new),
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+#degree centrality pro graf bez Aeroflotu a ruských letišť
+head(sort(degreeMulti, decreasing = TRUE), n=20)
+head(sort(degreeSimple, decreasing = TRUE), n=20)
+
+#odstranění codeshare letů
+codeshareDataSt <- skyTeamNew%>% filter(Codeshare != "Y")
+
+codeshare_graph_st <- graph_from_data_frame(codeshareDataSt, directed=TRUE)
+
+
+#nový graf poute s hranami, kde let operuje AF nebo KL
+airFranceKlm<-delete.edges(codeshare_graph_st, which(E(codeshare_graph_st)$Airline != c("AF", "KL")))
+
+#počty hran AirFrance KLM
+cdg <- incident(airFranceKlm, 37, mode = c("all"))
+ams <- incident(airFranceKlm, 7, mode = c("all"))
+
+#Celkem hran
+cdgAll <- incident(codeshare_graph_st, 37, mode = c("all"))
+amsAll <- incident(codeshare_graph_st, 7, mode = c("all"))
+
+#Hodnoty s Aeroflotem
+#summary(st_graph_old)
+closenessSU <- closeness(st_graph_old)
+degreeSU <- degree(st_graph_old)
+betweennessSU <- betweenness(st_graph_old)
+
+#Hodnoty bez Aeroflotu
+#summary(st_graph_new)
+closenessBezSU <- closeness(st_graph_new)
+degreeBezSU <- degree(st_graph_new)
+betweennessBezSU <- betweenness(st_graph_new)
+
+```
+
+# Oneworld
+
+```{r}
+ow_airlines <- c('AS', 'AA', 'BA', 'CX','AY','IB', 
+                 'JL', 'MH', 'QF','QR', 'AT', 'RJ', 'UL',
+                'FJ','WY')
+
+oneWorld <- routes%>% filter(Airline %in% ow_airlines)
+
+
+#z původního seznamu odebereme ruská letiště
+oneWorldNew <- oneWorld %>% filter(!SourceAirport %in% airportsRusko$IATA)
+oneWorldNew <- oneWorldNew %>% filter(!DestinationAirport %in% airportsRusko$IATA)
+
+ow_graph <- graph_from_data_frame(oneWorldNew, directed=FALSE)
+
+#odstraní multihrany
+ow_simple_graph <- simplify(
+  ow_graph,
+  remove.multiple = TRUE,
+  remove.loops = TRUE
+)
+
+# Degree centrality včetně multihran
+degreeMultiOW <-degree(
+  ow_graph,
+  v = V(ow_graph),
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+# Degree centrality bez multihran
+degreeSimpleOW <-degree(
+  ow_simple_graph,
+  v = V(ow_simple_graph),
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+head(sort(degreeMultiOW,decreasing=TRUE),n=20)
+
+#odstranění codeshare letů - celkový objem letů operovaných hlavní leteckou spol
+codeshareDataOw <- oneWorldNew%>% filter(Codeshare != "Y")
+
+codeshare_graph_ow <- graph_from_data_frame(codeshareDataOw, directed=TRUE)
+
+# pro celkový počet letů z/do LHR
+degreeLHR <-degree(
+  codeshare_graph_ow,
+  v = V(codeshare_graph_ow)$name=="LHR",
+  mode = c("all"),
+  loops = FALSE,
+  normalized = FALSE
+)
+
+#nový graf poute s hranami, kde let operuje BA
+britishAirways<-delete.edges(codeshare_graph_ow, which(E(codeshare_graph_ow)$Airline != c("BA")))
+
+#počty hran z/do LHR, které operuje BA
+lhr <- incident(britishAirways, 125, mode = c("all"))
+
+#Celkem hran
+lhrAll <- incident(codeshare_graph_ow, 125, mode = c("all"))
+
+```
+

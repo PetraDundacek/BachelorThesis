@@ -1,0 +1,348 @@
+---
+title: "Obecná analýza letištní sítě"
+author: "Petra Dundáček Božoňová"
+output:
+  pdf_document:
+    highlight: kate
+    keep_tex: true
+  html_document:
+    # code_folding: hide
+    highlight: kate
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+    # includes:
+    #   before_body: header.html
+---
+
+# Načtení knihoven
+```{r message=FALSE, warning=FALSE, purl=FALSE}
+library(dplyr) # knihovna pro zpracování dat (data.frame)
+library(ggplot2) # knihovna pro vykreslování grafů
+library(igraph) # knihovna pro analýzu sítí 
+library(rvest) # knihovna pro web scraping
+rm(list=ls()) # vyčištění prostředí (odstranění všech objektů z aktuálního prostředí)
+```
+
+```{r include=FALSE}
+output_type <- knitr::opts_knit$get("rmarkdown.pandoc.to")
+```
+
+# Načtení dat
+Celá práce je založena na dvou datasetech, které jsou včetně vysvětlivek dostupné na [tomto odkaze](https://openflights.org/data.php).
+
+## Data o letech
+
+Načtěme si hlavní soubor `routes.dat`.
+```{r}
+routes <- read.table("Dataset\\routes.dat", sep = ",")
+colnames(routes) <- c("Airline", "AirlineID",
+                      "SourceAirport", "SourceAirportID",
+                      "DestinationAirport", "DestinationAirportID",
+                      "Codeshare", "Stops", "Equipment")
+```
+a zobrazme si jeho prvních 200 řádků z celkových **`r nrow(routes)`**.
+
+```{r}
+if(output_type == "html") DT::datatable(routes %>% head(200))
+```
+
+Z tohoto datasetu budeme využívat pouze 4 sloupce:
+
+* `Airline` (kód letiště: většinou dvoupísmenný IATA kód, výjimečně třípísmenný ICAO kód)
+* `SourceAirport` (IATA kód výchozího letiště)
+* `DestinationAirport` (IATA kód cílového letiště)
+* `Codeshare` ("Y", pokud je let operován jiným dopravcem, jinak "")
+
+Vzhledem k dalšímu zpracování knihovnou `igraph` vybereme jako první dva sloupce kód výchozího a cílového letiště, tj. dva sloupce, které určují hrany ve studovaných grafech.
+
+```{r}
+routes <- routes %>% select(SourceAirport, DestinationAirport, Airline, Codeshare)
+if(output_type == "html") DT::datatable(routes %>% head(200))
+```
+
+## Data o letištích
+Nyní si načtěme pomocný soubor `airports.dat`.
+```{r}
+airports <- read.table("Dataset\\airports.dat", sep = ",", encoding = "UTF-8")
+colnames(airports) <- c("AirportID", "Name", "City", "Country", "IATA", "ICAO",
+                        "Latitude", "Longitude", "Altitude",
+                        "Timezone", "DST", "Tz", "Type", "Source")
+```
+a zobrazme si jeho prvních 200 řádků z celkových **`r nrow(airports)`**.
+
+```{r}
+if(output_type == "html") DT::datatable(airports %>% head(200))
+```
+
+Z tohoto datasetu si ponecháme pouze 6 sloupců:
+
+* `Name` (název letiště)
+* `City` (nejbližší město k místu letiště)
+* `Country` (stát, ve kterém je umístěno letiště)
+* `IATA` (IATA kód letiště)
+* `Latitude` (zeměpisná šířka umíštění letiště ve stupních)
+* `Longitude` (zeměpisná délka umíštění letiště ve stupních)
+
+Klíčové pro další analýzu jsou přitom sloupce `Country` a `IATA`. 
+
+```{r}
+airports <- airports %>% select(Name, City, Country, IATA, Latitude, Longitude)
+if(output_type == "html") DT::datatable(airports %>% head(200))
+```
+```{r}
+g <- graph_from_data_frame(routes, directed = FALSE)
+```
+
+
+# Vytvoření výchozích `igraph` objektů
+Vytvoříme si výchozí grafy a vypíšeme si jejich počet uzlů a hran.
+```{r}
+graphFull <- graph_from_data_frame(routes, directed = FALSE)
+cat("Graf má", gorder(graphFull), "uzlů a", gsize(graphFull), "hran.")
+graphSimple <- simplify(graphFull,
+                        remove.multiple = TRUE,
+                        remove.loops = TRUE)
+cat("Graf má", gorder(graphSimple), "uzlů a", gsize(graphSimple), "hran.")
+```
+Počet hran tak klesl z **`r format(gsize(graphFull), scientific = FALSE)`** na **`r format(gsize(graphSimple), scientific = FALSE)`**.
+
+# Míry centrality
+## Degree Centrality
+
+```{r}
+degreeGraphFull <- degree(graphFull, loops = FALSE)
+degreeGraphSimple <- degree(graphSimple)
+```
+
+Vypišme 20 nejvýznamnějších letišť dle Degree Centrality.
+```{r}
+top20degreeGraphFull <- sort(degreeGraphFull, decreasing = TRUE)[1:20]
+top20degreeGraphFull
+top20degreeGraphSimple <- sort(degreeGraphSimple, decreasing = TRUE)[1:20]
+top20degreeGraphSimple
+```
+
+Pokud porovnáme 20 uzlů s nejvyšší hodnotou najdeme `r sum(names(top20degreeGraphFull) %in% names(top20degreeGraphSimple))` z nich v obou seznamech. Zobrazme si, která letiště to jsou a která jsou jen v prvním, resp. v druhém seznamu.
+
+```{r}
+x <- names(top20degreeGraphFull)
+y <- names(top20degreeGraphSimple)
+# letiště v obou seznamech
+x[x %in% y]
+# letiště v top20degreeGraphFull, ale ne v top20degreeGraphSimple
+x[!(x %in% y)]
+# letiště v top20degreeGraphSimple, ale ne v top20degreeGraphFull
+knitr::kable(airports[match(y[!(y %in% x)], airports$IATA), c(1, 4)], row.names=FALSE)
+```
+Nakonec určeme poměr Degree Centrality grafu s ponechanými multihranami s Degree Centrality grafu s odstraněnými multihranami a vypišme 20 nejvýznamnějších letišť dle tohoto poměru.
+```{r}
+round(sort(degreeGraphFull/degreeGraphSimple, decreasing = TRUE)[1:20], 3)
+```
+
+## Closeness Centrality
+Vypišme 20 nejvýznamnějších letišť dle Closeness Centrality.
+```{r}
+closenessGraphSimple <- closeness(graphSimple)
+round(sort(closenessGraphSimple, decreasing = TRUE)[1:20], 3)
+```
+Podívejme se na velikost jednotlivých komponent grafu.
+```{r}
+components(graphSimple)$csize
+```
+Je zřejmé, že největší komponenta grafu zahrnuje převážnou část uzlů (**`r max(components(graphSimple)$csize)`** ze `r sum(components(graphSimple)$csize)`).
+
+Nyní určeme největší komponentu grafu.
+
+```{r}
+gLargestComponentSimple <- largest_component(graphSimple)
+```
+
+Nakonec vypišme 20 nejvýznamnějších letišť největší komponenty grafu dle Closeness Centrality.
+```{r}
+closenessLargestComponentSimple <- closeness(gLargestComponentSimple)
+sort(closenessLargestComponentSimple, decreasing = TRUE)[1:20]
+```
+
+## Harmonic Centrality
+Vypišme 20 nejvýznamnějších letišť dle Harmonic Centrality.
+
+```{r}
+harmonicGraphSimple <- harmonic_centrality(graphSimple)
+sort(harmonicGraphSimple, decreasing = TRUE)[1:20]
+```
+
+Seznamy 20 nejvýznamnějších letišť dle Closeness Centralit pro největší komponentu grafu a dle Harmonic Centrality se shodují v 19 letištích, přičemž umístění (pořadí) letišť z obou seznamů dle těchto metrik jsou srovnatelná. Podívejme se na tato umístění.
+```{r}
+namesTop20CC <- names(sort(closenessLargestComponentSimple, decreasing = TRUE)[1:20])
+namesTop20HC <- names(sort(harmonicGraphSimple, decreasing = TRUE)[1:20])
+namesTop20CCHC <- sort(unique(c(namesTop20CC,namesTop20HC)))
+
+tableTop20CCHC <- matrix(c(rank(-closenessLargestComponentSimple)[namesTop20CCHC],
+                           rank(-harmonicGraphSimple)[namesTop20CCHC]), nrow = 2, byrow = 2)
+colnames(tableTop20CCHC) <- namesTop20CCHC
+rownames(tableTop20CCHC) <- c("closenessLargestComponentSimple", "harmonicGraphSimple")
+tableTop20CCHC
+```
+## Betweenness Centrality
+
+Vypišme 20 nejvýznamnějších letišť největší komponenty grafu dle Betweenness Centrality.
+
+```{r}
+betweennessLargestComponentSimple <- betweenness(gLargestComponentSimple)
+sort(betweennessLargestComponentSimple, decreasing = TRUE)[1:20]
+```
+
+Nyní každé hraně největší komponenty grafy přidělme váhu ve výši převrácené hodnoty počtu hran, resp. multihran mezi příslušnými uzly. Takto definovaný graf (dále `gLargestCompSimpWeighted`) je potřeba zkonstruovat od počátku z výchozího `graphFull`. Funkci `simplify()` využijeme nejen k odstranění multihran, ale také k nasčítání jejich počtu (proto nastavíme výchozí atribut váhy hrany `weight` na jedničku).
+
+```{r}
+gLargestCompSimpWeighted <- graphFull
+E(gLargestCompSimpWeighted)$weight <- 1
+gLargestCompSimpWeighted <- largest_component(simplify(gLargestCompSimpWeighted))
+E(gLargestCompSimpWeighted)$weight <- 1/E(gLargestCompSimpWeighted)$weight
+```
+
+Nyní určeme 20 nejvýznamnějších letišť `gLargestCompSimpWeighted` dle Betweenness Centrality.
+
+```{r}
+betweennessLargestCompSimpWeighted <- betweenness(gLargestCompSimpWeighted)
+sort(betweennessLargestCompSimpWeighted, decreasing = TRUE)[1:20]
+```
+
+Nyní se zaměřme na letiště *Anchorage*, které je z pohledu obou variant Betweenness Centrality velmi úspěšné. Nejprve se podívejme na souhrn jednotlivých metrik pro toto letiště.
+
+```{r}
+ANCmetrics <- data.frame(
+  metrika = c("`degreeGraphSimple`", "`degreeGraphFull`",
+              "`closenessLargestComponentSimple`", "`harmonicGraphSimple`",
+              "`betweennessLargestComponentSimple`", "`betweennessLargestCompSimpWeighted`"),
+  hodnota = c(degreeGraphSimple["ANC"], degreeGraphFull["ANC"],
+              closenessLargestComponentSimple["ANC"], harmonicGraphSimple["ANC"],
+              betweennessLargestComponentSimple["ANC"], betweennessLargestCompSimpWeighted["ANC"]),
+  pořadí = c(rank(-degreeGraphSimple)["ANC"], rank(-degreeGraphFull)["ANC"],
+             rank(-closenessLargestComponentSimple)["ANC"], rank(-harmonicGraphSimple)["ANC"],
+             rank(-betweennessLargestComponentSimple)["ANC"], rank(-betweennessLargestCompSimpWeighted)["ANC"])
+)
+ANCmetrics$hodnota <- format(ANCmetrics$hodnota, digits = 4)
+knitr::kable(ANCmetrics)
+```
+
+Dále se podívejme na letiště přímo sousedící s letištěm *Anchorage*. Nejprve si připravme doplňující informace o letištích v USA ze stránky na Wikipedii, viz [List of airports in the United States](https://en.wikipedia.org/wiki/List_of_airports_in_the_United_States) a [List of airports in Alaska](https://en.wikipedia.org/wiki/List_of_airports_in_Alaska).
+
+```{r}
+USAirports <- read_html("https://en.wikipedia.org/wiki/List_of_airports_in_the_United_States") %>%
+  html_table() %>% .[[2]]
+selectedRows <- which(USAirports$FAA=="")
+nRepetitions <- c(selectedRows[-1], nrow(USAirports) + 1) - selectedRows - 1
+USAirports <- cbind(data.frame(State = rep(USAirports$City[selectedRows], nRepetitions),
+                               USAirports[-selectedRows,]))
+AlaskaAirports <- read_html("https://en.wikipedia.org/wiki/List_of_airports_in_Alaska") %>%
+  html_table() %>% .[[1]] %>% filter(`City served` != "")
+AlaskaAirports$State <- rep("ALASKA", nrow(AlaskaAirports))
+AlaskaAirports$IATA <- gsub("\\[1\\]", "", AlaskaAirports$IATA)
+AlaskaAirports <- AlaskaAirports[c(ncol(AlaskaAirports), 1:(ncol(AlaskaAirports)-1))]
+colnames(AlaskaAirports) <- colnames(USAirports)
+USAirports <- unique(rbind(USAirports, AlaskaAirports))
+if(output_type == "html") DT::datatable(USAirports)
+```
+
+Nyní se podívejme na `degreeGraphSimple` letišť přímo sousedících s letištěm *Anchorage*.
+```{r}
+ANCneighbors <- neighbors(graphSimple, "ANC")$name
+dfANCneighbors <- airports %>% select(IATA, Name) %>% filter(IATA %in% ANCneighbors)
+dfANCneighbors$State <- USAirports$State[match(dfANCneighbors$IATA, USAirports$IATA)]
+dfANCneighbors$degreeGraphSimple <- degreeGraphSimple[dfANCneighbors$IATA]
+knitr::kable(dfANCneighbors %>% arrange(degreeGraphSimple, IATA))
+```
+Dále zobrazme podgraf letiště *Anchorage* a jeho sousedů.
+
+```{r}
+graphANC <- induced_subgraph(graphSimple, c("ANC", neighbors(graphSimple, "ANC")$name))
+plot(graphANC, vertex.label.cex = 0.5)
+```
+
+A nakonec se podívejme, co se stane s hlavní komponentou grafu, jestliže z ní letiště Anchorage odebereme.
+```{r}
+gSimpleWithoutANC <- delete_vertices(gLargestComponentSimple, "ANC")
+gComponentsSimpleWithoutANC <- components(gSimpleWithoutANC)
+gComponentsSimpleWithoutANC$csize
+```
+
+Rozpadne se na 11 komponent grafu, přičemž většina uzlů bude součástí největší z nich. Ostatních 10 menších komponent si zobrazme.
+
+```{r}
+gComponentsSimpleWithoutANCreduced <-
+  delete_vertices(gLargestComponentSimple,
+                  c(V(largest_component(gSimpleWithoutANC))$name, "ANC"))
+vertex.color <- rep("green", gorder(gComponentsSimpleWithoutANCreduced))
+vertex.color[V(gComponentsSimpleWithoutANCreduced)$name %in% V(graphANC)$name] <- "orange"
+plot(gComponentsSimpleWithoutANCreduced, vertex.label.cex = 0.5, vertex.color = vertex.color)
+```
+
+Podívejme se, v jakém státě letiště z těchto 10 menších komponent leží.
+```{r}
+setNames(USAirports$State[match(V(gComponentsSimpleWithoutANCreduced)$name, USAirports$IATA)],
+         V(gComponentsSimpleWithoutANCreduced)$name)
+```
+
+## Eigenvector Centrality
+
+Vypišme 20 nejvýznamnějších letišť největší komponenty grafu dle Eigenvector Centrality.
+
+```{r}
+EVCLargestComponentSimple <- eigen_centrality(gLargestComponentSimple)$vector
+sort(EVCLargestComponentSimple, decreasing = TRUE)[1:20]
+```
+
+Zobrazme si také největší kliku největší komponenty grafu.
+```{r}
+largest_cliques(gLargestComponentSimple)
+```
+
+A podívejme se na umístění letišť z první zjištěné největší kliky v pořadí dle výše uvedené Eigenvector Centrality.
+
+```{r}
+setNames(match((largest_cliques(gLargestComponentSimple)[[1]])$name,
+               names(sort(EVCLargestComponentSimple, decreasing = TRUE))),
+               (largest_cliques(gLargestComponentSimple)[[1]])$name)
+```
+
+# Degree Distribution
+
+Nejdříve si ukážeme výsledky pro Degree Distribution uzlů letecké dopravní sítě bez multihran.
+```{r}
+table(degreeGraphSimple)
+```
+
+```{r}
+plot(degree_distribution(graphSimple, cumulative = FALSE)[-1],
+     log = "xy",
+     xlab = "Degree (log scale)",
+     ylab = "Frequency (log scale)",
+     main = "Degree Distribution for `graphSimple`in Log-Log Scale",
+     type = "o")
+```
+
+A nakonec si ukážeme výsledky pro Degree Distribution uzlů letecké dopravní sítě s multihranami.
+```{r}
+table(degreeGraphFull)
+```
+
+```{r}
+plot(degree_distribution(graphFull, cumulative = FALSE)[-1],
+     log = "xy",
+     xlab = "Degree (log scale)",
+     ylab = "Frequency (log scale)",
+     main = "Degree Distribution for `graphFull` in Log-Log Scale",
+     type = "o")
+```
+
+
+# Shlukovací koeficient
+
+Nejprve si zobrazíme globální transitivity za celou síť.
+
+```{r}
+transitivity(graphSimple, type = "global")
+```
