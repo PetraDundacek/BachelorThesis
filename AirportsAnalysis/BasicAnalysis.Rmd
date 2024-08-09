@@ -36,7 +36,7 @@ Celá práce je založena na dvou datasetech, které jsou včetně vysvětlivek 
 
 Načtěme si hlavní soubor `routes.dat`.
 ```{r}
-routes <- read.table("Dataset\\routes.dat", sep = ",")
+routes <- read.table("routes.dat", sep = ",")
 colnames(routes) <- c("Airline", "AirlineID",
                       "SourceAirport", "SourceAirportID",
                       "DestinationAirport", "DestinationAirportID",
@@ -65,7 +65,7 @@ if(output_type == "html") DT::datatable(routes %>% head(200))
 ## Data o letištích
 Nyní si načtěme pomocný soubor `airports.dat`.
 ```{r}
-airports <- read.table("Dataset\\airports.dat", sep = ",", encoding = "UTF-8")
+airports <- read.table("airports.dat", sep = ",", encoding = "UTF-8")
 colnames(airports) <- c("AirportID", "Name", "City", "Country", "IATA", "ICAO",
                         "Latitude", "Longitude", "Altitude",
                         "Timezone", "DST", "Tz", "Type", "Source")
